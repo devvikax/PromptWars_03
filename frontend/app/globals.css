@@ -1,0 +1,60 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&display=swap');
+@import "../styles/tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --canvas: 244 59% 97%; /* #F4FBF7 */
+    --cardbg: 0 0% 100%; /* #FFFFFF */
+    --text-primary: 128 30% 15%; /* #1A301D */
+    --text-muted: 130 13% 42%; /* #5E7A62 */
+    
+    --primary-green: 96 98% 41%; /* #58CC02 */
+    --primary-green-shadow: 96 99% 31%; /* #3A9E01 */
+    --reward-gold: 41 100% 50%; /* #FFB000 */
+    --reward-gold-shadow: 41 100% 42%; /* #D88D00 */
+    --water-blue: 199 89% 48%; /* #0EA5E9 */
+    --danger-red: 0 100% 65%; /* #FF4B4B */
+    --border: 132 26% 82%; /* #C3DEC9 */
+    
+    --radius: 16px;
+    --radius-button: 9999px;
+  }
+
+  .dark {
+    --canvas: 132 35% 9%; /* #0F1F13 */
+    --cardbg: 132 29% 15%; /* #1B3020 */
+    --text-primary: 152 75% 96%; /* #ECFDF5 */
+    --text-muted: 131 15% 61%; /* #8CA991 */
+    
+    --primary-green: 154 75% 67%; /* #6EE7B7 */
+    --primary-green-shadow: 162 88% 20%; /* #065F46 */
+    --reward-gold: 45 100% 50%; /* #FFC000 */
+    --reward-gold-shadow: 45 100% 30%; /* #9A6A00 */
+    --water-blue: 199 89% 60%; /* #38BDF8 */
+    --danger-red: 0 100% 80%; /* #FCA5A5 */
+    --border: 132 29% 15%; /* #1B3020 */
+  }
+
+  body {
+    @apply bg-canvas-light text-text-primary-light font-sans antialiased;
+  }
+
+  .dark body {
+    @apply bg-canvas-dark text-text-primary-dark;
+  }
+}
+
+/* Spinner Animation for Loading States */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spinner {
+  animation: spin 0.6s linear infinite;
+}

@@ -1,0 +1,66 @@
+/**
+ * Green Hero Design System Tokens
+ * Central design tokens catalog.
+ */
+
+:root {
+  /* --- 1. Color Tokens (WCAG Compliant) --- */
+  /* Light Mode (Default Mint Tint Theme) */
+  --color-canvas-light: #F4FBF7;
+  --color-cardbg-light: #FFFFFF;
+  --color-text-primary-light: #1A301D;
+  --color-text-muted-light: #5E7A62;
+  
+  --color-primary-green: #58CC02;
+  --color-primary-green-shadow: #3A9E01;
+  --color-reward-gold: #FFB000;
+  --color-reward-gold-shadow: #D88D00;
+  --color-water-blue: #0EA5E9;
+  --color-danger-red: #FF4B4B;
+  --color-border-light: #C3DEC9;
+
+  /* Dark Mode Theme */
+  --color-canvas-dark: #0F1F13;
+  --color-cardbg-dark: #1B3020;
+  --color-text-primary-dark: #ECFDF5;
+  --color-text-muted-dark: #8CA991;
+  
+  --color-primary-green-dark: #6EE7B7;
+  --color-primary-green-dark-shadow: #065F46;
+  --color-reward-gold-dark: #FFC000;
+  --color-reward-gold-dark-shadow: #9A6A00;
+  --color-water-blue-dark: #38BDF8;
+  --color-danger-red-dark: #FCA5A5;
+  --color-border-dark: #1B3020;
+
+  /* --- 2. Typography Tokens --- */
+  --font-family-sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --font-weight-extrabold: 800;
+
+  /* --- 3. Spacing Tokens (Tactile flat layouts) --- */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  --spacing-2xl: 48px;
+
+  /* --- 4. Border Radius Tokens --- */
+  --radius-card: 16px;
+  --radius-button: 9999px; /* Fully rounded pill shape */
+
+  /* --- 5. Motion Tokens (Framer Motion spring values) --- */
+  /*
+   * Custom Spring Pop preset for tactile bouncy clicks:
+   * stiffness: 300, damping: 15 (satisfying bounce)
+   *
+   * Standard Transition duration:
+   * duration: 0.25s, ease: ease-out [0.4, 0, 0.2, 1]
+   */
+  --transition-speed-fast: 150ms;
+  --transition-speed-normal: 250ms;
+  --transition-speed-slow: 400ms;
+}
