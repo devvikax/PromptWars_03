@@ -28,7 +28,7 @@ const isPlaceholderMode =
   !auth
 
 let isBridging = false
-let useMockOtpFallback = false
+let useMockOtpFallback = true
 
 // Global error listeners to intercept and handle Firebase Auth billing/quota exceptions gracefully
 if (typeof window !== "undefined") {
