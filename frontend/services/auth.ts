@@ -139,16 +139,17 @@ let firebaseConfirmationResult: ConfirmationResult | null = null
 let recaptchaVerifierInstance: RecaptchaVerifier | null = null
 let useMockOtpFallback = false
 
-// Helper to initialize reCAPTCHA container dynamically
-function getOrCreateRecaptchaContainer(): string {
+// Helper to initialize a brand new reCAPTCHA container dynamically to prevent rendering conflicts
+function createCleanRecaptchaContainer(): string {
   if (typeof window === "undefined") return ""
-  let container = document.getElementById("recaptcha-container")
-  if (!container) {
-    container = document.createElement("div")
-    container.id = "recaptcha-container"
-    container.style.display = "none"
-    document.body.appendChild(container)
+  const existing = document.getElementById("recaptcha-container")
+  if (existing) {
+    existing.remove()
   }
+  const container = document.createElement("div")
+  container.id = "recaptcha-container"
+  container.style.display = "none"
+  document.body.appendChild(container)
   return "recaptcha-container"
 }
 
@@ -167,12 +168,17 @@ export async function sendOtpCode(phone: string): Promise<boolean> {
   try {
     if (!auth) throw new Error("Firebase Auth is not initialized.")
 
-    const containerId = getOrCreateRecaptchaContainer()
-    
-    // Create/reset recaptcha verifier
+    // Clear existing verifier instance to prevent duplication
     if (recaptchaVerifierInstance) {
-      recaptchaVerifierInstance.clear()
+      try {
+        recaptchaVerifierInstance.clear()
+      } catch (e) {
+        console.warn("Error clearing RecaptchaVerifier:", e)
+      }
+      recaptchaVerifierInstance = null
     }
+
+    const containerId = createCleanRecaptchaContainer()
     
     recaptchaVerifierInstance = new RecaptchaVerifier(auth, containerId, {
       size: "invisible",
