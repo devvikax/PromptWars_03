@@ -1,4 +1,5 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
 
 // In Next.js client-side code, process.env variables must be prefixed with NEXT_PUBLIC_
 // to be exposed to the browser. If they are not prefixed, we check both.
@@ -18,3 +19,6 @@ const hasConfig = !!firebaseConfig.apiKey;
 export const app = hasConfig
   ? (getApps().length === 0 ? initializeApp(firebaseConfig) : getApp())
   : null;
+
+export const auth = app ? getAuth(app) : null;
+

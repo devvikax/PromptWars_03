@@ -1,4 +1,14 @@
 import { supabase } from "./supabase"
+import { auth } from "@/lib/firebase"
+import {
+  signInWithPopup,
+  GoogleAuthProvider,
+  signOut as firebaseSignOut,
+  onAuthStateChanged,
+  signInWithPhoneNumber,
+  RecaptchaVerifier,
+  ConfirmationResult
+} from "firebase/auth"
 import { useAuthStore } from "@/store/auth-store"
 import { useSessionStore } from "@/store/session-store"
 import { useGameStore } from "@/store/game-store"
@@ -14,68 +24,133 @@ import { completeMissionOnDb, getUserCompletedMissions } from "./db-missions"
 // Check if Supabase connection is unconfigured
 const isPlaceholderMode =
   !process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-url")
+  process.env.NEXT_PUBLIC_SUPABASE_URL.includes("placeholder-url") ||
+  !auth
 
-// 1. Listen for auth changes and write cookies for Next.js Middleware route checking
-if (typeof window !== "undefined") {
-  supabase.auth.onAuthStateChange((event, session) => {
-    if (session) {
-      // Set Supabase auth token cookies
-      document.cookie = `sb-access-token=${session.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-      document.cookie = `sb-refresh-token=${session.refresh_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-      
-      const user = session.user
-      useAuthStore.getState().setSessionUser({
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-      })
+let isBridging = false
 
-      // Fetch user profile and completed missions from Supabase and sync local stores
-      Promise.all([
-        getUserProfile(user.id),
-        getUserCompletedMissions(user.id)
-      ]).then(([profile, completedMissions]) => {
-        if (profile) {
-          // If onboarding answers exist in db, restore them and set cookie
-          if (profile.travelType && profile.acUsage && profile.foodType) {
-            useProfileStore.getState().setPreferences({
-              travelType: profile.travelType,
-              acUsage: profile.acUsage,
-              foodType: profile.foodType,
-            })
-            // Write green-hero-onboarded cookie!
-            document.cookie = "green-hero-onboarded=true; path=/; max-age=31536000; SameSite=Lax"
-          }
+// 1. Listen for Firebase auth changes and bridge them to Supabase
+if (typeof window !== "undefined" && auth) {
+  onAuthStateChanged(auth, async (firebaseUser) => {
+    const { setError, setLoading } = useSessionStore.getState()
+    if (firebaseUser) {
+      if (isBridging) return
+      isBridging = true
+      setLoading(true)
+      try {
+        // Prepare login credentials for Supabase
+        const email = firebaseUser.email || `phone_${firebaseUser.uid}@greenhero.app`
+        const password = firebaseUser.uid // Use secret Firebase UID as password
 
-          // Restore game stats and completed mission IDs
-          const completedMissionIds = completedMissions.map((cm) => cm.missionId)
-          useGameStore.setState({
-            level: profile.level,
-            xp: profile.xp,
-            streak: profile.streak,
-            waterDrops: profile.waterDrops,
-            completedMissionIds: completedMissionIds,
+        // Try to sign in to Supabase
+        let { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        })
+
+        // If user not found, sign up in Supabase
+        if (error && error.message.includes("Invalid login credentials")) {
+          const signUpRes = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: {
+                firebase_uid: firebaseUser.uid,
+              }
+            }
+          })
+          if (signUpRes.error) throw signUpRes.error
+          
+          // Re-attempt sign-in
+          const retryRes = await supabase.auth.signInWithPassword({
+            email,
+            password,
+          })
+          if (retryRes.error) throw retryRes.error
+          data = retryRes.data
+        } else if (error) {
+          throw error
+        }
+
+        // Establish the cookies and session
+        if (data.session) {
+          const session = data.session
+          document.cookie = `sb-access-token=${session.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+          document.cookie = `sb-refresh-token=${session.refresh_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+          
+          const user = session.user
+          useAuthStore.getState().setSessionUser({
+            id: user.id,
+            email: firebaseUser.email || undefined,
+            phone: firebaseUser.phoneNumber || undefined,
           })
 
-          // Load achievements, rewards, collections, behavior from DB
-          useAchievementStore.getState().loadAchievements(user.id)
-          useRewardStore.getState().loadRewards(user.id)
-          useCollectionStore.getState().loadCollections(user.id)
-          useBehaviorStore.getState().loadBehavior(user.id)
+          // Sync database profile and local stores
+          const [profile, completedMissions] = await Promise.all([
+            getUserProfile(user.id),
+            getUserCompletedMissions(user.id)
+          ])
+
+          if (profile) {
+            if (profile.travelType && profile.acUsage && profile.foodType) {
+              useProfileStore.getState().setPreferences({
+                travelType: profile.travelType,
+                acUsage: profile.acUsage,
+                foodType: profile.foodType,
+              })
+              document.cookie = "green-hero-onboarded=true; path=/; max-age=31536000; SameSite=Lax"
+            }
+
+            const completedMissionIds = completedMissions.map((cm) => cm.missionId)
+            useGameStore.setState({
+              level: profile.level,
+              xp: profile.xp,
+              streak: profile.streak,
+              waterDrops: profile.waterDrops,
+              completedMissionIds: completedMissionIds,
+            })
+
+            useAchievementStore.getState().loadAchievements(user.id)
+            useRewardStore.getState().loadRewards(user.id)
+            useCollectionStore.getState().loadCollections(user.id)
+            useBehaviorStore.getState().loadBehavior(user.id)
+          }
         }
-      }).catch((err) => console.error("Error loading user profile on auth change:", err))
+      } catch (err: any) {
+        console.error("Error bridging Firebase to Supabase:", err)
+        setError(err.message || "Failed to sync authenticated profile.")
+      } finally {
+        isBridging = false
+        setLoading(false)
+      }
     } else {
-      // Only clear standard user cookies (do not wipe guest cookie unless intended)
+      // Clear cookies and sign out from Supabase if signed in
       document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;"
       document.cookie = "sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;"
       
+      await supabase.auth.signOut()
       useAuthStore.getState().setSessionUser(null)
     }
   })
 }
 
-// 2. Auth Actions
+// 2. Auth Actions & State Variables
+let firebaseConfirmationResult: ConfirmationResult | null = null
+let recaptchaVerifierInstance: RecaptchaVerifier | null = null
+
+// Helper to initialize reCAPTCHA container dynamically
+function getOrCreateRecaptchaContainer(): string {
+  if (typeof window === "undefined") return ""
+  let container = document.getElementById("recaptcha-container")
+  if (!container) {
+    container = document.createElement("div")
+    container.id = "recaptcha-container"
+    container.style.display = "none"
+    document.body.appendChild(container)
+  }
+  return "recaptcha-container"
+}
+
 export async function sendOtpCode(phone: string): Promise<boolean> {
   const { setError, setLoading } = useSessionStore.getState()
   setLoading(true)
@@ -89,15 +164,44 @@ export async function sendOtpCode(phone: string): Promise<boolean> {
   }
 
   try {
-    const { error } = await supabase.auth.signInWithOtp({ phone })
-    if (error) throw error
+    if (!auth) throw new Error("Firebase Auth is not initialized.")
+
+    const containerId = getOrCreateRecaptchaContainer()
+    
+    // Create/reset recaptcha verifier
+    if (recaptchaVerifierInstance) {
+      recaptchaVerifierInstance.clear()
+    }
+    
+    recaptchaVerifierInstance = new RecaptchaVerifier(auth, containerId, {
+      size: "invisible",
+      callback: () => {
+        // reCAPTCHA solved
+      },
+      "expired-callback": () => {
+        setError("reCAPTCHA expired. Please try again.")
+      }
+    })
+
+    // Ensure phone number has international code format
+    let formattedPhone = phone.trim()
+    if (!formattedPhone.startsWith("+")) {
+      if (formattedPhone.length === 10) {
+        formattedPhone = "+1" + formattedPhone
+      } else {
+        formattedPhone = "+" + formattedPhone
+      }
+    }
+
+    const confirmationResult = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifierInstance)
+    firebaseConfirmationResult = confirmationResult
     return true
   } catch (err: any) {
-    console.error("Supabase OTP request failed:", err)
-    if (err.status === 429) {
-      setError("SMS rate limit reached. Please wait a minute before retrying.")
-    } else {
-      setError(err.message || "Failed to send verification SMS.")
+    console.error("Firebase Phone Auth request failed:", err)
+    setError(err.message || "Failed to send verification SMS.")
+    if (recaptchaVerifierInstance) {
+      recaptchaVerifierInstance.clear()
+      recaptchaVerifierInstance = null
     }
     return false
   } finally {
@@ -136,21 +240,29 @@ export async function verifyOtpCode(phone: string, token: string): Promise<boole
   }
 
   try {
-    const { data, error } = await supabase.auth.verifyOtp({
-      phone,
-      token,
-      type: "sms",
-    })
+    if (!firebaseConfirmationResult) {
+      throw new Error("No verification request found. Please request a new code.")
+    }
     
-    if (error) throw error
-    if (data.session) {
-      // Sync guest progress to verified database profile
-      await syncAndMergeGuestProgress(data.session.user.id)
-      return true
+    const result = await firebaseConfirmationResult.confirm(token)
+    if (result.user) {
+      // Wait for session user to resolve via bridge
+      let retries = 0
+      while (retries < 20) {
+        const currentUser = useAuthStore.getState().user
+        if (currentUser && !currentUser.id.startsWith("usr_mock_")) {
+          // Sync guest progress to verified database profile
+          await syncAndMergeGuestProgress(currentUser.id)
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        retries++
+      }
+      throw new Error("Sync timeout. Please refresh the page.")
     }
     return false
   } catch (err: any) {
-    console.error("Supabase OTP verification failed:", err)
+    console.error("Firebase OTP verification failed:", err)
     setError(err.message || "Invalid or expired verification code.")
     return false
   } finally {
@@ -159,8 +271,9 @@ export async function verifyOtpCode(phone: string, token: string): Promise<boole
 }
 
 export async function signInWithGoogleOAuth(): Promise<void> {
-  const { setError } = useSessionStore.getState()
+  const { setError, setLoading } = useSessionStore.getState()
   setError(null)
+  setLoading(true)
 
   if (isPlaceholderMode) {
     console.log("Mock Mode: Simulating Google login redirect...")
@@ -178,25 +291,41 @@ export async function signInWithGoogleOAuth(): Promise<void> {
   }
 
   try {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: {
-        redirectTo: `${window.location.origin}/dashboard`,
-      },
-    })
-    if (error) throw error
+    if (!auth) throw new Error("Firebase Auth is not initialized.")
+    const provider = new GoogleAuthProvider()
+    const result = await signInWithPopup(auth, provider)
+    if (result.user) {
+      // Wait for session user to resolve via bridge
+      let retries = 0
+      while (retries < 20) {
+        const currentUser = useAuthStore.getState().user
+        if (currentUser && !currentUser.id.startsWith("usr_mock_")) {
+          await syncAndMergeGuestProgress(currentUser.id)
+          window.location.href = "/dashboard"
+          return
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        retries++
+      }
+      throw new Error("Sync timeout. Please try again.")
+    }
   } catch (err: any) {
-    console.error("Google OAuth initialization failed:", err)
+    console.error("Firebase Google Auth failed:", err)
     setError(err.message || "Could not initialize Google authentication.")
+  } finally {
+    setLoading(false)
   }
 }
 
 export async function signOutUser(): Promise<void> {
   try {
-    if (!isPlaceholderMode) {
-      await supabase.auth.signOut()
+    if (!isPlaceholderMode && auth) {
+      await firebaseSignOut(auth)
+    } else {
+      document.cookie = "sb-access-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;"
+      document.cookie = "sb-refresh-token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC;"
+      useAuthStore.getState().logout()
     }
-    useAuthStore.getState().logout()
   } catch (err) {
     console.error("Signout failed:", err)
   }
@@ -208,11 +337,9 @@ export async function syncAndMergeGuestProgress(authUserId: string): Promise<voi
   
   if (guestUserId) {
     console.log(`Merging guest ${guestUserId} progress into user ${authUserId}`)
-    // Call database RPC to change user_id on completions
     const mergeOk = await mergeGuestProgressDb(guestUserId, authUserId)
     
     if (mergeOk) {
-      // Sync local game-store level, streak, drops, and XP into permanent table
       const { level, xp, streak, waterDrops, completedMissionIds } = useGameStore.getState()
       const { travelType, acUsage, foodType } = useProfileStore.getState()
       
@@ -227,7 +354,6 @@ export async function syncAndMergeGuestProgress(authUserId: string): Promise<voi
         isGuest: false,
       })
 
-      // Sync completed missions to DB user_missions table!
       if (completedMissionIds.length > 0) {
         try {
           const existingCompletions = await getUserCompletedMissions(authUserId)
@@ -243,7 +369,6 @@ export async function syncAndMergeGuestProgress(authUserId: string): Promise<voi
         }
       }
 
-      // Sync achievements, rewards, collections, behavior to Supabase
       try {
         await useAchievementStore.getState().syncWithSupabase(authUserId)
         await useRewardStore.getState().syncWithSupabase(authUserId)
@@ -257,6 +382,5 @@ export async function syncAndMergeGuestProgress(authUserId: string): Promise<voi
     }
   }
   
-  // Clean up guest local stores since session is now fully authenticated
   useGuestStore.getState().resetGuestSession()
 }
