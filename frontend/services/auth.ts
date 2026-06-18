@@ -28,6 +28,51 @@ const isPlaceholderMode =
   !auth
 
 let isBridging = false
+let useMockOtpFallback = false
+
+// Global error listeners to intercept and handle Firebase Auth billing/quota exceptions gracefully
+if (typeof window !== "undefined") {
+  const handleAuthBillingError = (err: any) => {
+    if (
+      err &&
+      (err.code === "auth/billing-not-enabled" ||
+        err.message?.includes("billing-not-enabled") ||
+        err.message?.includes("auth/billing-not-enabled"))
+    ) {
+      console.warn("Handled Firebase Auth billing error gracefully:", err)
+      useMockOtpFallback = true
+      const { setError, setLoading } = useSessionStore.getState()
+      setLoading(false)
+      setError("Firebase SMS billing is disabled. Demo/Test mode is now active. Click 'Send SMS Code' again to verify using test code 123456.")
+    }
+  }
+
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason
+    if (
+      reason &&
+      (reason.code === "auth/billing-not-enabled" ||
+        reason.message?.includes("billing-not-enabled") ||
+        reason.message?.includes("auth/billing-not-enabled"))
+    ) {
+      event.preventDefault() // Prevents Next.js runtime error overlay!
+      handleAuthBillingError(reason)
+    }
+  })
+
+  window.addEventListener("error", (event) => {
+    const error = event.error || event.message
+    if (
+      error &&
+      (error.code === "auth/billing-not-enabled" ||
+        error.toString().includes("billing-not-enabled") ||
+        error.toString().includes("auth/billing-not-enabled"))
+    ) {
+      event.preventDefault() // Prevents Next.js runtime error overlay!
+      handleAuthBillingError(error)
+    }
+  })
+}
 
 // 1. Listen for Firebase auth changes and bridge them to Supabase
 if (typeof window !== "undefined" && auth) {
@@ -137,7 +182,6 @@ if (typeof window !== "undefined" && auth) {
 // 2. Auth Actions & State Variables
 let firebaseConfirmationResult: ConfirmationResult | null = null
 let recaptchaVerifierInstance: RecaptchaVerifier | null = null
-let useMockOtpFallback = false
 
 // Helper to initialize a brand new reCAPTCHA container dynamically to prevent rendering conflicts
 function createCleanRecaptchaContainer(): string {
@@ -158,7 +202,7 @@ export async function sendOtpCode(phone: string): Promise<boolean> {
   setLoading(true)
   setError(null)
   
-  if (isPlaceholderMode) {
+  if (isPlaceholderMode || useMockOtpFallback) {
     console.log("Mock Mode: Sending verification code 123456 to", phone)
     await new Promise((resolve) => setTimeout(resolve, 800))
     setLoading(false)
