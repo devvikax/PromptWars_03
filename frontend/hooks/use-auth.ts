@@ -3,8 +3,8 @@
 import { useAuthStore } from "@/store/auth-store"
 import { useSessionStore } from "@/store/session-store"
 import {
-  sendOtpCode,
-  verifyOtpCode,
+  signInWithEmailPassword,
+  registerWithEmailPassword,
   signInWithGoogleOAuth,
   signOutUser,
 } from "@/services/auth"
@@ -13,14 +13,14 @@ export function useAuth() {
   const { user, isGuest, isAuthenticated, loginAsGuest } = useAuthStore()
   const { isLoading, error, setError, clearError } = useSessionStore()
 
-  const handleSendOtp = async (phone: string): Promise<boolean> => {
+  const handleLogin = async (email: string, password: string): Promise<boolean> => {
     clearError()
-    return await sendOtpCode(phone)
+    return await signInWithEmailPassword(email, password)
   }
 
-  const handleVerifyOtp = async (phone: string, token: string): Promise<boolean> => {
+  const handleRegister = async (email: string, password: string): Promise<boolean> => {
     clearError()
-    return await verifyOtpCode(phone, token)
+    return await registerWithEmailPassword(email, password)
   }
 
   const handleGoogleLogin = async (): Promise<void> => {
@@ -40,8 +40,8 @@ export function useAuth() {
     isLoading,
     error,
     loginAsGuest,
-    sendOtp: handleSendOtp,
-    verifyOtp: handleVerifyOtp,
+    login: handleLogin,
+    register: handleRegister,
     loginWithGoogle: handleGoogleLogin,
     logout: handleLogout,
   }

@@ -5,9 +5,8 @@ import {
   GoogleAuthProvider,
   signOut as firebaseSignOut,
   onAuthStateChanged,
-  signInWithPhoneNumber,
-  RecaptchaVerifier,
-  ConfirmationResult
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from "firebase/auth"
 import { useAuthStore } from "@/store/auth-store"
 import { useSessionStore } from "@/store/session-store"
@@ -28,51 +27,6 @@ const isPlaceholderMode =
   !auth
 
 let isBridging = false
-let useMockOtpFallback = true
-
-// Global error listeners to intercept and handle Firebase Auth billing/quota exceptions gracefully
-if (typeof window !== "undefined") {
-  const handleAuthBillingError = (err: any) => {
-    if (
-      err &&
-      (err.code === "auth/billing-not-enabled" ||
-        err.message?.includes("billing-not-enabled") ||
-        err.message?.includes("auth/billing-not-enabled"))
-    ) {
-      console.warn("Handled Firebase Auth billing error gracefully:", err)
-      useMockOtpFallback = true
-      const { setError, setLoading } = useSessionStore.getState()
-      setLoading(false)
-      setError("Firebase SMS billing is disabled. Demo/Test mode is now active. Click 'Send SMS Code' again to verify using test code 123456.")
-    }
-  }
-
-  window.addEventListener("unhandledrejection", (event) => {
-    const reason = event.reason
-    if (
-      reason &&
-      (reason.code === "auth/billing-not-enabled" ||
-        reason.message?.includes("billing-not-enabled") ||
-        reason.message?.includes("auth/billing-not-enabled"))
-    ) {
-      event.preventDefault() // Prevents Next.js runtime error overlay!
-      handleAuthBillingError(reason)
-    }
-  })
-
-  window.addEventListener("error", (event) => {
-    const error = event.error || event.message
-    if (
-      error &&
-      (error.code === "auth/billing-not-enabled" ||
-        error.toString().includes("billing-not-enabled") ||
-        error.toString().includes("auth/billing-not-enabled"))
-    ) {
-      event.preventDefault() // Prevents Next.js runtime error overlay!
-      handleAuthBillingError(error)
-    }
-  })
-}
 
 // 1. Listen for Firebase auth changes and bridge them to Supabase
 if (typeof window !== "undefined" && auth) {
@@ -84,7 +38,7 @@ if (typeof window !== "undefined" && auth) {
       setLoading(true)
       try {
         // Prepare login credentials for Supabase
-        const email = firebaseUser.email || `phone_${firebaseUser.uid}@greenhero.app`
+        const email = firebaseUser.email || `user_${firebaseUser.uid}@greenhero.app`
         const password = firebaseUser.uid // Use secret Firebase UID as password
 
         // Try to sign in to Supabase
@@ -127,7 +81,6 @@ if (typeof window !== "undefined" && auth) {
           useAuthStore.getState().setSessionUser({
             id: user.id,
             email: firebaseUser.email || undefined,
-            phone: firebaseUser.phoneNumber || undefined,
           })
 
           // Sync database profile and local stores
@@ -179,197 +132,36 @@ if (typeof window !== "undefined" && auth) {
   })
 }
 
-// 2. Auth Actions & State Variables
-let firebaseConfirmationResult: ConfirmationResult | null = null
-let recaptchaVerifierInstance: RecaptchaVerifier | null = null
-
-// Helper to initialize a brand new reCAPTCHA container dynamically to prevent rendering conflicts
-function createCleanRecaptchaContainer(): string {
-  if (typeof window === "undefined") return ""
-  const existing = document.getElementById("recaptcha-container")
-  if (existing) {
-    existing.remove()
-  }
-  const container = document.createElement("div")
-  container.id = "recaptcha-container"
-  container.style.display = "none"
-  document.body.appendChild(container)
-  return "recaptcha-container"
-}
-
-export async function sendOtpCode(phone: string): Promise<boolean> {
+// 2. Email & Password Auth Actions
+export async function registerWithEmailPassword(email: string, password: string): Promise<boolean> {
   const { setError, setLoading } = useSessionStore.getState()
   setLoading(true)
   setError(null)
-  
-  if (isPlaceholderMode || useMockOtpFallback) {
-    console.log("Mock Mode: Sending verification code 123456 to", phone)
+
+  if (isPlaceholderMode) {
     await new Promise((resolve) => setTimeout(resolve, 800))
+    const mockUserId = "usr_mock_" + Math.random().toString(36).substring(2, 9)
+    document.cookie = `sb-access-token=mock-token-${mockUserId}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+    
+    useAuthStore.getState().setSessionUser({
+      id: mockUserId,
+      email,
+    })
+
+    await syncAndMergeGuestProgress(mockUserId)
     setLoading(false)
     return true
   }
 
   try {
     if (!auth) throw new Error("Firebase Auth is not initialized.")
-
-    // Clear existing verifier instance to prevent duplication
-    if (recaptchaVerifierInstance) {
-      try {
-        recaptchaVerifierInstance.clear()
-      } catch (e) {
-        console.warn("Error clearing RecaptchaVerifier:", e)
-      }
-      recaptchaVerifierInstance = null
-    }
-
-    const containerId = createCleanRecaptchaContainer()
-    
-    recaptchaVerifierInstance = new RecaptchaVerifier(auth, containerId, {
-      size: "invisible",
-      callback: () => {
-        // reCAPTCHA solved
-      },
-      "expired-callback": () => {
-        setError("reCAPTCHA expired. Please try again.")
-      }
-    })
-
-    // Ensure phone number has international code format
-    let formattedPhone = phone.trim()
-    if (!formattedPhone.startsWith("+")) {
-      if (formattedPhone.length === 10) {
-        formattedPhone = "+91" + formattedPhone
-      } else {
-        formattedPhone = "+91" + formattedPhone
-      }
-    }
-
-    const confirmationResult = await signInWithPhoneNumber(auth, formattedPhone, recaptchaVerifierInstance)
-    firebaseConfirmationResult = confirmationResult
-    useMockOtpFallback = false // reset flag on success
-    return true
-  } catch (err: any) {
-    console.error("Firebase Phone Auth request failed:", err)
-    
-    // Check for billing-not-enabled or other quota/configuration issues
-    const errCode = err.code || ""
-    if (
-      errCode === "auth/billing-not-enabled" ||
-      errCode === "auth/quota-exceeded" ||
-      errCode === "auth/operation-not-allowed" ||
-      errCode === "auth/internal-error" ||
-      err.message?.includes("billing") ||
-      err.message?.includes("quota")
-    ) {
-      console.warn(`Firebase Phone Auth error (${errCode}). Falling back to Demo/Test OTP mode.`);
-      useMockOtpFallback = true
-      return true // Return true to advance to the verification code screen
-    }
-
-    setError(err.message || "Failed to send verification SMS.")
-    if (recaptchaVerifierInstance) {
-      recaptchaVerifierInstance.clear()
-      recaptchaVerifierInstance = null
-    }
-    return false
-  } finally {
-    setLoading(false)
-  }
-}
-
-export async function verifyOtpCode(phone: string, token: string): Promise<boolean> {
-  const { setError, setLoading } = useSessionStore.getState()
-  setLoading(true)
-  setError(null)
-
-  if (isPlaceholderMode || useMockOtpFallback) {
-    await new Promise((resolve) => setTimeout(resolve, 800))
-    if (token === "123456") {
-      if (isPlaceholderMode) {
-        // Pure mock user mode
-        const mockUserId = "usr_mock_" + Math.random().toString(36).substring(2, 9)
-        document.cookie = `sb-access-token=mock-token-${mockUserId}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-        
-        useAuthStore.getState().setSessionUser({
-          id: mockUserId,
-          phone,
-        })
-
-        await syncAndMergeGuestProgress(mockUserId)
-        setLoading(false)
-        return true
-      } else {
-        // useMockOtpFallback is true: Bridge to Supabase using a deterministic email/password for this phone number
-        const cleanPhone = phone.replace(/\D/g, "")
-        const email = `phone_${cleanPhone}@greenhero.app`
-        const password = `mock_pass_phone_${cleanPhone}`
-        
-        try {
-          let { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-          })
-
-          if (error && error.message.includes("Invalid login credentials")) {
-            const signUpRes = await supabase.auth.signUp({
-              email,
-              password,
-            })
-            if (signUpRes.error) throw signUpRes.error
-            
-            const retryRes = await supabase.auth.signInWithPassword({
-              email,
-              password,
-            })
-            if (retryRes.error) throw retryRes.error
-            data = retryRes.data
-          } else if (error) {
-            throw error
-          }
-
-          if (data.session) {
-            const session = data.session
-            document.cookie = `sb-access-token=${session.access_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-            document.cookie = `sb-refresh-token=${session.refresh_token}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
-            
-            const user = session.user
-            useAuthStore.getState().setSessionUser({
-              id: user.id,
-              email: undefined,
-              phone: phone,
-            })
-
-            await syncAndMergeGuestProgress(user.id)
-            setLoading(false)
-            return true
-          }
-        } catch (dbErr: any) {
-          console.error("Mock OTP Supabase bridge failed:", dbErr)
-          setError("Verified but failed to establish database session: " + dbErr.message)
-          setLoading(false)
-          return false
-        }
-      }
-    } else {
-      setError("Invalid verification code. Please try 123456")
-      setLoading(false)
-      return false
-    }
-  }
-
-  try {
-    if (!firebaseConfirmationResult) {
-      throw new Error("No verification request found. Please request a new code.")
-    }
-    
-    const result = await firebaseConfirmationResult.confirm(token)
+    const result = await createUserWithEmailAndPassword(auth, email, password)
     if (result.user) {
       // Wait for session user to resolve via bridge
       let retries = 0
       while (retries < 20) {
         const currentUser = useAuthStore.getState().user
         if (currentUser && !currentUser.id.startsWith("usr_mock_")) {
-          // Sync guest progress to verified database profile
           await syncAndMergeGuestProgress(currentUser.id)
           return true
         }
@@ -380,8 +172,67 @@ export async function verifyOtpCode(phone: string, token: string): Promise<boole
     }
     return false
   } catch (err: any) {
-    console.error("Firebase OTP verification failed:", err)
-    setError(err.message || "Invalid or expired verification code.")
+    console.error("Firebase Registration failed:", err)
+    let userMessage = err.message || "Failed to create account."
+    if (err.code === "auth/email-already-in-use") {
+      userMessage = "This email address is already in use."
+    } else if (err.code === "auth/invalid-email") {
+      userMessage = "Please enter a valid email address."
+    } else if (err.code === "auth/weak-password") {
+      userMessage = "Password should be at least 6 characters."
+    }
+    setError(userMessage)
+    return false
+  } finally {
+    setLoading(false)
+  }
+}
+
+export async function signInWithEmailPassword(email: string, password: string): Promise<boolean> {
+  const { setError, setLoading } = useSessionStore.getState()
+  setLoading(true)
+  setError(null)
+
+  if (isPlaceholderMode) {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const mockUserId = "usr_mock_" + Math.random().toString(36).substring(2, 9)
+    document.cookie = `sb-access-token=mock-token-${mockUserId}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+    
+    useAuthStore.getState().setSessionUser({
+      id: mockUserId,
+      email,
+    })
+
+    await syncAndMergeGuestProgress(mockUserId)
+    setLoading(false)
+    return true
+  }
+
+  try {
+    if (!auth) throw new Error("Firebase Auth is not initialized.")
+    const result = await signInWithEmailAndPassword(auth, email, password)
+    if (result.user) {
+      // Wait for session user to resolve via bridge
+      let retries = 0
+      while (retries < 20) {
+        const currentUser = useAuthStore.getState().user
+        if (currentUser && !currentUser.id.startsWith("usr_mock_")) {
+          await syncAndMergeGuestProgress(currentUser.id)
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        retries++
+      }
+      throw new Error("Sync timeout. Please refresh the page.")
+    }
+    return false
+  } catch (err: any) {
+    console.error("Firebase Login failed:", err)
+    let userMessage = err.message || "Failed to log in."
+    if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+      userMessage = "Invalid email or password."
+    }
+    setError(userMessage)
     return false
   } finally {
     setLoading(false)
