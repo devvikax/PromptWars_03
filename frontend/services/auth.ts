@@ -238,9 +238,9 @@ export async function sendOtpCode(phone: string): Promise<boolean> {
     let formattedPhone = phone.trim()
     if (!formattedPhone.startsWith("+")) {
       if (formattedPhone.length === 10) {
-        formattedPhone = "+1" + formattedPhone
+        formattedPhone = "+91" + formattedPhone
       } else {
-        formattedPhone = "+" + formattedPhone
+        formattedPhone = "+91" + formattedPhone
       }
     }
 

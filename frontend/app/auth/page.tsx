@@ -115,7 +115,7 @@ export default function AuthPage() {
                     <input
                       id="phone"
                       type="tel"
-                      placeholder="+1 (555) 019-9000"
+                      placeholder="+91 98765 43210"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
                       required
