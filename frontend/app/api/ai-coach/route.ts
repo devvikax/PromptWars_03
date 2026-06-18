@@ -125,12 +125,12 @@ User Profile Context:
         "Authorization": `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "llama-3-8b-instruct",
+        model: "llama-3.1-8b-instant",
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: question }
         ],
-        temperature: 0.7,
+        temperature: 1.0,
         max_tokens: 150
       })
     })
