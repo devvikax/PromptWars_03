@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <rect width="512" height="512" rx="128" fill="#10B981"/>
+  <!-- Main Leaf -->
+  <path d="M256 128 C160 128 128 224 128 320 C128 384 176 400 256 400 C336 400 384 384 384 320 C384 224 352 128 256 128 Z" fill="#34D399"/>
+  <!-- Veins -->
+  <path d="M256 400 L256 180 M256 340 L310 290 M256 300 L330 250 M256 260 L310 210 M256 340 L202 290 M256 300 L182 250 M256 260 L202 210" stroke="#059669" stroke-width="12" stroke-linecap="round" fill="none"/>
+  <!-- Sprout Pollen Bud -->
+  <circle cx="256" cy="120" r="16" fill="#FBBF24" />
+</svg>

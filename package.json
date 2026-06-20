@@ -1,10 +1,39 @@
 {
-  "name": "green-hero-monorepo",
-  "version": "1.0.0",
+  "name": "green-hero",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "npm run dev --prefix frontend",
-    "build": "npm run build --prefix frontend",
-    "lint": "npm run lint --prefix frontend"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "class-variance-authority": "^0.7.0",
+    "clsx": "^2.1.1",
+    "firebase": "^12.15.0",
+    "framer-motion": "^11.2.10",
+    "lucide-react": "^0.395.0",
+    "next": "15.0.0-rc.0",
+    "react": "rc",
+    "react-dom": "rc",
+    "tailwind-merge": "^2.3.0",
+    "tailwindcss-animate": "^1.0.7",
+    "three": "^0.184.0",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.2",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@types/three": "^0.184.1",
+    "autoprefixer": "^10.5.0",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "15.0.0-rc.0",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.4",
+    "typescript": "^5.4.5"
   }
 }

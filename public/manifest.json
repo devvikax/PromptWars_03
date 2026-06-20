@@ -1,0 +1,18 @@
+{
+  "name": "Green Hero",
+  "short_name": "GreenHero",
+  "description": "Gamified Carbon Saving & Living 3D Ecosystem Simulation",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#10B981",
+  "theme_color": "#059669",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

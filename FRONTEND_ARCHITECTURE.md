@@ -1,295 +1,151 @@
-# Green Hero: Frontend Implementation Architecture
+# Frontend Architecture: Green Hero Gamified Ecosystem
 
-This document serves as the complete technical implementation blueprint for the **Green Hero** application, acting as the single source of truth for engineering.
+Green Hero utilizes a modern, component-driven, responsive frontend architecture optimized for low-latency state synchronization, springy gamified micro-interactions, and WCAG accessibility standards.
 
 ---
 
 ## 1. Directory Structure
 
-We use a modular, feature-oriented structure inside Next.js 15 (App Router). Features are grouped in `features/` to isolate core domains, while shared utilities and components sit in directories at the root.
-
 ```
-green-hero-app/
-├── app/                           # Next.js App Router root
-│   ├── layout.tsx                 # Root layout (provides providers & core wrappers)
-│   ├── page.tsx                   # Splash screen route
-│   ├── onboarding/                # Onboarding multi-step route
-│   │   └── page.tsx
-│   ├── dashboard/                 # Authed/Guest main dashboard route (Home screen)
-│   │   └── page.tsx
-│   ├── progress/                  # Progress analytics route
-│   │   └── page.tsx
-│   ├── rewards/                   # Rewards & Achievements route
-│   │   └── page.tsx
-│   ├── profile/                   # Profile & Settings route
-│   │   └── page.tsx
-│   └── auth/                      # OTP / Google authentication entry route
-│       └── page.tsx
-│
-├── components/                    # Shared UI Components (Design System Library)
-│   ├── ui/                        # Low-level primitives (shadcn/ui customized for tactile look)
-│   │   ├── button.tsx
-│   │   ├── card.tsx
-│   │   ├── dialog.tsx
-│   │   ├── progress.tsx
-│   │   └── sheet.tsx
-│   ├── bottom-nav-bar.tsx         # Mobile tab bar
-│   ├── sidebar-nav.tsx            # Desktop sidebar
-│   ├── state-empty.tsx            # Empty status UI
-│   ├── state-loading.tsx          # Skeleton loader state
-│   └── state-error.tsx            # Connection error UI
-│
-├── features/                      # Isolated core features (domains)
-│   ├── missions/                  # Daily Mission card & execution logic
-│   │   ├── components/
-│   │   ├── hooks/
-│   │   └── store.ts
-│   ├── achievements/              # Badge grids and locked/unlocked state triggers
-│   │   ├── components/
-│   │   └── store.ts
-│   ├── tree-growth/               # Tree rendering stages and growth animations
-│   │   ├── components/
-│   │   └── store.ts
-│   └── auth-conversion/           # Guest-to-authed upgrade flows
-│       └── components/
-│
-├── hooks/                         # Global reusable hooks
-│   ├── use-local-storage.ts       # Offline-first state mirroring
-│   └── use-media-query.ts         # Responsive layout checks
-│
-├── services/                      # Supabase client wrapper and API abstractions
-│   ├── supabase.ts                # Client initialization
-│   ├── db-missions.ts             # Mission CRUD & completion endpoints
-│   ├── db-achievements.ts         # Achievement milestones trigger fetches
-│   └── db-user.ts                 # Guest upgrade & profile syncing endpoints
-│
-├── types/                         # TypeScript interfaces and type declarations
-│   ├── index.ts                   # Core data models (Missions, Achievements, Users)
-│   └── database.types.ts          # Auto-generated Supabase schema types
-│
-└── utils/                         # Pure utility functions
-    ├── cn.ts                      # Tailwind merge utility class tool
-    └── formula-carbon.ts          # Simple calculations translating actions into tree equivalents
+├── app/                           # Next.js App Router Pages & Layouts
+│   ├── api/                       # Full-Stack Server-Side Route Handlers
+│   │   ├── achievements/          # Achievements catalog & unlocks
+│   │   ├── ai-coach/              # Llama AI Coach route with history & token logger
+│   │   ├── analytics/             # Telemetry log write endpoint
+│   │   ├── behavior/              # Telemetry stats sync
+│   │   ├── collections/           # Flora/Fauna inventory unlocks
+│   │   ├── missions/              # Missions catalog & completed status
+│   │   ├── onboarding/            # Profile preferences onboarding
+│   │   └── profile/               # Profile reads, writes, and merges
+│   ├── auth/                      # Authentication login/register views
+│   ├── dashboard/                 # Central gamified dashboard
+│   ├── onboarding/                # Feet-on-the-ground preferences quiz
+│   ├── profile/                   # User stats & notifications toggle
+│   ├── progress/                  # Achievements view
+│   ├── rewards/                   # Upgrades catalog
+│   ├── globals.css                # Tailwind base configurations
+│   └── layout.tsx                 # Root layout & providers
+├── components/                    # Modular visual UI components
+│   ├── auth/                      # Dual Auth panels & SaveProgressModal
+│   ├── ui/                        # Visual cards, buttons, tree components
+│   ├── analytics-tracker.tsx      # Client-side telemetry tracker
+│   ├── pwa-provider.tsx           # SW registration & offline banner
+│   └── theme-provider.tsx         # Dark/Light theme provider
+├── constants/                     # Central static data catalogs
+├── hooks/                         # Custom React hooks (useAuth)
+├── lib/                           # Central config initializers
+│   ├── firebase.ts                # Client-side Firebase App, Auth, and DB
+│   ├── firebase-server.ts         # Server-side JWT helper & DB REST client
+│   └── utils.ts                   # Tailwind merge utility
+├── public/                        # PWA assets, manifest, and service worker
+│   ├── icon.svg                   # Scalable vector logo
+│   ├── manifest.json              # PWA manifest configurations
+│   └── sw.js                      # Service Worker caching rules
+├── services/                      # Client-side API abstraction helpers
+│   ├── auth-header.ts             # Firebase JWT Bearer token resolver
+│   ├── auth.ts                    # Email/Password & Session bridges
+│   ├── db-achievements.ts         # achievements client API
+│   ├── db-missions.ts             # missions client API
+│   ├── db-onboarding.ts           # onboarding client API
+│   ├── db-user.ts                 # user profile client API
+│   ├── llama-integration.ts       # Client proxy to AI Coach
+│   ├── llm-coach-service.ts       # AI Coach fallback rules router
+│   └── notification-service.ts    # Notification permission & alerts scheduling
+├── store/                         # Zustand local & offline state stores
+├── styles/                        # Custom animations & theme sheets
+└── types/                         # TypeScript interfaces
 ```
 
 ---
 
-## 2. Component Trees (Screen Hierarchy)
+## 2. Core State Management Architecture
 
-We map the nested components for each of the core application routes below.
+Green Hero utilizes **Zustand** as its primary client-side state store. To support offline play out-of-the-box, Zustand is integrated with the `persist` middleware which automatically synchronizes in-memory game state with `LocalStorage`.
 
-### 2.1 Splash Screen
 ```
-AppRoot -> SplashLayout
- ├── SplashContainer (Centered layout)
- │    ├── SeedMascotBrand (Illustration + Title + Subtitle)
- │    ├── PrimaryButton ("Get Started" -> Guest Mode Route)
- │    └── SecondaryButton ("Log In" -> Auth Login Options Modal)
- └── BrandFooter (Legal & safety disclaimer)
-```
-
-### 2.2 Onboarding Flow
-```
-AppRoot -> OnboardingLayout
- ├── OnboardingHeader (Skip button -> direct route to /dashboard)
- ├── OnboardingQuestionContainer (Swaps cards based on activeStep)
- │    ├── QuestionText (Prompt + Description text)
- │    ├── ChoiceCardGroup (Single-selection toggle cards)
- │    │    ├── ChoiceCard (e.g. Travel: Car, Bus, Metro, Walk)
- │    │    └── ChoiceCard (Selected: Walk - active green outline, checkmark icon)
- │    └── NextButton (Primary Button - triggers nextPage or finish)
- └── ProgressDotsIndicator (3-dot visual footer showing active step)
-```
-
-### 2.3 Home Dashboard (Primary view)
-```
-AppRoot -> DashboardLayout
- ├── ResponsiveNavigation (Swaps between BottomNavBar / SidebarNav)
- ├── DashboardContainer (Responsive grid: 1-col mobile, 2-col tablet, 3-col desktop)
-      ├── HeaderStatsRow
-      │    ├── LevelBadge ("Level 3: Carbon Cadet")
-      │    ├── StreakCounter ("5 Day Streak 🔥")
-      │    └── XPProgressBar (Filled bar + "240/300 XP" + Star Handle)
-      ├── TreeStageContainer (Central growth display)
-      │    ├── TreeIllustration (Central animated seedling/sapling/tree character)
-      │    ├── TreeHealthBadge ("Earth Health: Good 😊")
-      │    └── LevelUpgradeTriggerModal (Celebration screen popup)
-      ├── DailyMissionCard
-      │    ├── MissionMetadata (Title + XP/Water value)
-      │    └── PrimaryButton ("Done! Complete Mission")
-      └── SmartTipCard (Carbon equivalent explanation tip)
-```
-
-### 2.4 Progress Screen
-```
-AppRoot -> ProgressLayout
- ├── ResponsiveNavigation
- ├── ProgressContainer
-      ├── EarthHealthBanner (Detailed good/warning/excellent status explanation)
-      ├── ImpactGrid (2-column tactile layout)
-      │    ├── ImpactCard (Carbon: "1 Tree Planted" + "Equivalent to 12kg of CO2")
-      │    └── ImpactCard (Water: "3 Buckets Saved" + "30 Liters conserved")
-      └── CompletedHistorySection
-           ├── SectionHeader ("Missions Completed")
-           ├── HistoryList
-           │    ├── CompletedHistoryItem (🚶 Walked to store, Yesterday, +20 XP)
-           │    └── CompletedHistoryItem (🔌 Unplugged chargers, 2 days ago, +15 XP)
-           └── EmptyHistoryState (Shown if list is empty)
-```
-
-### 2.5 Rewards Screen
-```
-AppRoot -> RewardsLayout
- ├── ResponsiveNavigation
- ├── RewardsContainer
-      ├── StreakMilestoneBanner ("5-Day Streak!" progress banner)
-      ├── BadgesGrid (2-column grid layout)
-      │    ├── BadgeCard (Unlocked: "First Step" - color, check icon)
-      │    ├── BadgeCard (Unlocked: "Streak Master" - color, fire icon)
-      │    └── BadgeCard (Locked: "Earth Protector" - grayscale, lock icon)
-      └── TreeRoadmapStages (Visual timeline of growth stages)
-```
-
-### 2.6 Profile & Authentication Screen
-```
-AppRoot -> ProfileLayout
- ├── ResponsiveNavigation
- ├── ProfileContainer
-      ├── ProfileAvatarHeader (Guest avatar seed illustration + "Guest Hero" + level badge)
-      ├── SaveProgressCard (Invites registration)
-      │    └── PrimaryButton ("Sign Up / Log In" -> triggers AuthModal)
-      ├── AuthModal (Authentication Dialog - overlay)
-      │    ├── ModalHeader ("Create Account")
-      │    ├── PhoneOTPModule (Enter phone number -> triggers CodeEntryScreen)
-      │    ├── GoogleLoginButton (OAuth integration link)
-      │    └── AppleLoginButton (OAuth integration link)
-      └── AICoachContainer (Muted placeholder section)
+                    +--------------------+
+                    |   Zustand Store    |
+                    | (Active Memory State) |
+                    +---------+----------+
+                              |
+                     (Zustand Persist)
+                              |
+                              v
+                    +---------+----------+
+                    |    LocalStorage    |
+                    |  (Offline Backup)  |
+                    +---------+----------+
+                              |
+                    (API Sync on Network)
+                              |
+                              v
+                    +---------+----------+
+                    |    Firebase DB     |
+                    | (Permanent Profile) |
+                    +--------------------+
 ```
 
 ---
 
-## 3. State Management Strategy
+## 3. Firebase Integration Plan
 
-We recommend **Zustand** as the primary state manager. It is extremely lightweight, requires minimal boilerplate, supports TypeScript out of the box, and provides simple middleware to sync state automatically with local storage, enabling an **offline-first** design.
+All user data is stored in the NoSQL Firebase Realtime Database under a structured `/users/${userId}` tree. Next.js server-side API routes use raw REST operations to communicate with the database.
 
-### Zustand Stores Structure
-
-```typescript
-// 1. Auth Store (store/auth-store.ts)
-interface AuthState {
-  user: User | null;         // Holds user details (null if guest)
-  isGuest: boolean;          // Set to true by default
-  isAuthenticated: boolean;  // Set to true after OTP/Google auth
-  setSession: (session: Session | null) => void;
-  upgradeGuestToUser: (authedUser: User) => Promise<void>; // Merges local stats
-}
-
-// 2. Game Progress Store (store/game-store.ts)
-interface GameState {
-  level: number;             // E.g., Level 3
-  xp: number;                // E.g., 240
-  xpNeeded: number;          // E.g., 300
-  streak: number;            // E.g., 5
-  waterDrops: number;        // E.g., 2
-  addXp: (amount: number) => void;
-  incrementStreak: () => void;
-  resetStreak: () => void;
-  completeMissionLocal: (missionId: string) => void;
-}
-```
-
----
-
-## 4. Supabase Integration Plan
-
-### 4.1 Relational Database Schema
-
-We design a flat, relational structure optimized for fast reads. Relationships are mapped below.
+### 3.1 NoSQL Document Schema
 
 ```
- [users] 
-    ├── id (UUID, PK)
+ /users/${userId}
     ├── email (String)
-    ├── phone (String)
-    ├── is_guest (Boolean)
-    └── created_at (Timestamp)
- 
- [missions]
-    ├── id (UUID, PK)
-    ├── title (Text)
-    ├── description (Text)
-    ├── xp_reward (Integer)
-    ├── water_reward (Integer)
-    └── category (Enum: 'transport', 'energy', 'diet')
-
- [user_missions] (Many-to-Many junction)
-    ├── id (UUID, PK)
-    ├── user_id (UUID, FK -> users.id)
-    ├── mission_id (UUID, FK -> missions.id)
-    ├── completed_at (Timestamp)
-    └── synced (Boolean) - Local storage tracking flag
-
- [achievements]
-    ├── id (UUID, PK)
-    ├── key (String, Unique)
-    ├── title (Text)
-    ├── description (Text)
-    ├── icon_slug (String)
-    └── xp_required (Integer)
-
- [user_achievements]
-    ├── id (UUID, PK)
-    ├── user_id (UUID, FK -> users.id)
-    ├── achievement_id (UUID, FK -> achievements.id)
-    └── unlocked_at (Timestamp)
-
- [progress_logs]
-    ├── id (UUID, PK)
-    ├── user_id (UUID, FK -> users.id)
-    ├── carbon_saved_g (Float)
-    ├── water_saved_l (Float)
-    └── log_date (Date)
+    ├── phone (String/Null)
+    ├── isGuest (Boolean)
+    ├── level (Integer)
+    ├── xp (Integer)
+    ├── streak (Integer)
+    ├── waterDrops (Integer)
+    ├── travelType (String/Null)
+    ├── acUsage (String/Null)
+    ├── foodType (String/Null)
+    ├── earthHealth (String)
+    │
+    ├── completedMissions/ (List of completions)
+    │     └── [missionId]: { id, userId, missionId, completedAt }
+    │
+    ├── unlockedAchievements/ (Set of unlocked achievements)
+    │     └── [achievementKey]: true
+    │
+    ├── unlockedCollections/ (Set of unlocked birds/flowers)
+    │     └── [collectionKey]: true
+    │
+    ├── unlockedRewards/ (Set of unlocked ecosystem upgrades)
+    │     └── [rewardKey]: true
+    │
+    ├── behavior/ (User interaction telemetry)
+    │     ├── ignoredMissionsCount (Integer)
+    │     ├── categoryPreferences/
+    │     │     └── [category]: { completed, ignored, skipped }
+    │     └── lastActiveAt (Timestamp)
+    │
+    └── insightLogs/ (Conversations and daily tips logs)
+          └── [timestamp]: { content, timestamp, tokenUsage: { promptTokens, completionTokens, totalTokens } }
 ```
 
-### 4.2 Guest Account Conversion Trigger (Supabase RPC Function)
-When a guest signs in via Phone OTP or Google, their local stats (missions completed, XP, streak) must merge into their permanent profile. We write an RPC function in Postgres:
-
-```sql
-CREATE OR REPLACE FUNCTION merge_guest_progress(
-  p_guest_id UUID,
-  p_auth_user_id UUID
-) RETURNS VOID AS $$
-BEGIN
-  -- 1. Update user_missions from guest to authenticated user
-  UPDATE user_missions
-  SET user_id = p_auth_user_id
-  WHERE user_id = p_guest_id;
-
-  -- 2. Update progress logs from guest to authenticated user
-  UPDATE progress_logs
-  SET user_id = p_auth_user_id
-  WHERE user_id = p_guest_id;
-
-  -- 3. Delete the temporary guest record from users table
-  DELETE FROM users WHERE id = p_guest_id;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-```
+### 3.2 Guest Progress Merging (Server-Side)
+When a guest signs up for a permanent account, the `/api/profile` POST handler fetches both `/users/${guestId}` and `/users/${userId}` records, merges their statistics (levels, XP, completion logs, and unlocked inventories), saves the unified profile under the authenticated user's ID, and deletes the temporary guest profile.
 
 ---
 
-## 5. Animation Architecture (Framer Motion)
+## 4. Animation Architecture (Framer Motion)
 
-Animations must feel satisfying and springy, matching the game-like look of Duolingo. We define custom transitions:
+Animations must feel satisfying and springy. We define custom transitions:
 
-### 5.1 Framer Motion Presets
+### 4.1 Framer Motion Presets
 
 ```typescript
 // Spring presets for tactical pops
 export const springPop = {
   type: "spring",
   stiffness: 300,
-  damping: 15, // Creates a satisfying bounce effect
+  damping: 15,
 };
 
 export const standardEase = {
@@ -299,7 +155,7 @@ export const standardEase = {
 };
 ```
 
-### 5.2 Micro-Interaction Animators (Framer Variants)
+### 4.2 Micro-Interaction Animators (Framer Variants)
 
 ```typescript
 // 1. Level-Up Modal Pop
@@ -326,7 +182,7 @@ export const treeGrowthVariants = {
 
 ---
 
-## 6. Accessibility Implementation Plan (WCAG 2.1 AAA)
+## 5. Accessibility Implementation Plan (WCAG 2.1 AAA)
 
 Green Hero ensures 100% usability for individuals with visual impairments, screen reader requirements, or low digital literacy.
 
@@ -334,7 +190,7 @@ Green Hero ensures 100% usability for individuals with visual impairments, scree
 2.  **Focus States & Keyboard Trapping**:
     *   No-mouse keyboard navigation maps all click activities via Tab focus.
     *   Custom CSS focus indicators: `.btn:focus-visible { outline: 3px solid #58CC02; outline-offset: 2px; }`
-    *   Dialog components use Radix UI focus traps to lock keyboard cursor movement inside modals (like the OTP dialog).
+    *   Dialog components use Radix UI focus traps to lock keyboard cursor movement inside modals.
 3.  **Aria Announcement Indicators (`aria-live`)**:
     *   XP Progress updates feature an `aria-live="polite"` indicator so screen readers read XP updates without interrupting active navigation.
 4.  **Low Literacy Layouts**: Emojis are wrapped with semantic descriptors:
@@ -344,18 +200,18 @@ Green Hero ensures 100% usability for individuals with visual impairments, scree
 
 ---
 
-## 7. Performance & Caching Plan
+## 6. Performance & Caching Plan
 
 - **Dynamic Lazy Loading**: Routes like the Rewards tab and the Profile modal are lazy loaded using Next.js `dynamic()` imports to minimize the primary JavaScript bundle size.
 - **Next.js Image Optimization**: All static tree stage illustrations and mascot assets are served as SVGs or WebP formats via `<Image src={...} width={...} height={...} priority />` to prevent layout shifts.
 - **Service Worker / Offline Check-Ins (PWA)**:
-  - Green Hero uses `next-pwa` to register service workers.
-  - Offline mode: Users can complete their daily mission offline. Zustand queues the completion event in LocalStorage. When the browser triggers a `navigator.onLine` reconnect, the queued event is synced to Supabase.
+  - Green Hero uses a custom service worker to register PWA rules.
+  - Offline mode: Users can complete their daily mission offline. Zustand queues the completion event in LocalStorage. When the browser triggers a `navigator.onLine` reconnect, the queued event is synced to Firebase.
 - **HTTP Caching**: Tips database uses Next.js `revalidate: 86400` (static rendering refreshed once every 24 hours).
 
 ---
 
-## 8. Development Roadmap
+## 7. Development Roadmap
 
 ### Phase 1: Core Design System Primitives
 *   Configure Tailwind theme configurations with the exact Light/Dark tokens.
@@ -371,10 +227,10 @@ Green Hero ensures 100% usability for individuals with visual impairments, scree
 *   Integrate Framer Motion curves to buttons, modal triggers, and level up popups.
 *   Add micro-animations for particle starbursts and XP floating text indicators.
 
-### Phase 4: Supabase Backend Integration
-*   Write Postgres migrations for schema tables (`users`, `missions`, `user_missions`, `achievements`, `progress_logs`).
-*   Deploy the guest progress merging Postgres RPC function.
-*   Hook up the authentication hooks for Phone OTP and Google OAuth.
+### Phase 4: Firebase Integration
+*   Establish Firebase Auth (Email/Password) client and REST server API routes.
+*   Deploy Firebase Realtime Database handlers (`dbRead`, `dbWrite`, `dbUpdate`) with `MOCK_DB` local persistence.
+*   Build guest-to-authenticated merge functions.
 
 ### Phase 5: Accessibility Audits & Testing
 *   Conduct manual keyboard navigation walkthroughs.
@@ -384,4 +240,4 @@ Green Hero ensures 100% usability for individuals with visual impairments, scree
 ### Phase 6: PWA Configuration & Deployment
 *   Generate PWA asset manifests (icons, manifest.json).
 *   Integrate service workers for offline caching and queue syncs.
-*   Deploy to production on Vercel.
+*   Deploy to production.
