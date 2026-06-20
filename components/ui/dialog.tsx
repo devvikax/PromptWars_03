@@ -73,7 +73,7 @@ export function Dialog({ isOpen, onClose, title, children, className }: DialogPr
             </div>
 
             {/* Content */}
-            <div className="font-sans text-sm text-text-primary-light dark:text-text-primary-dark">
+            <div className="font-sans text-sm text-text-primary-light dark:text-text-primary-dark flex-1 min-h-0 flex flex-col">
               {children}
             </div>
           </motion.div>
