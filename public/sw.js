@@ -1,12 +1,10 @@
 const CACHE_NAME = "green-hero-cache-v1"
 const OFFLINE_URL = "/"
 
-// Static files to cache immediately on installation
 const PRECACHE_ASSETS = [
   "/",
   "/manifest.json",
   "/icon.svg",
-  "/styles/globals.css", // check if standard styling sheet
 ]
 
 self.addEventListener("install", (event) => {

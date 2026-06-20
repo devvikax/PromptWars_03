@@ -31,14 +31,23 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
 
     // 2. Register Service Worker
     if ("serviceWorker" in navigator) {
-      navigator.serviceWorker
-        .register("/sw.js")
-        .then((reg) => {
-          console.log("Service Worker registered successfully with scope:", reg.scope)
+      if (process.env.NODE_ENV === "development") {
+        navigator.serviceWorker.getRegistrations().then((registrations) => {
+          for (const registration of registrations) {
+            registration.unregister()
+            console.log("Dev Mode: Service Worker unregistered to prevent chunk caching.")
+          }
         })
-        .catch((err) => {
-          console.error("Service Worker registration failed:", err)
-        })
+      } else {
+        navigator.serviceWorker
+          .register("/sw.js")
+          .then((reg) => {
+            console.log("Service Worker registered successfully with scope:", reg.scope)
+          })
+          .catch((err) => {
+            console.error("Service Worker registration failed:", err)
+          })
+      }
     }
 
     // 3. Listen for Install Prompt
