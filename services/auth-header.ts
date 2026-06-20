@@ -7,12 +7,27 @@ export async function getAuthHeader(): Promise<Record<string, string>> {
   if (!currentUser) {
     // Attempt to get token from cookie as fallback, or just return empty
     // But since it's client-side, we can read the cookie if needed.
-    // Let's first check if there is a cookie for fb-access-token
     if (typeof window !== "undefined") {
       const match = document.cookie.match(/(^| )fb-access-token=([^;]+)/)
       if (match && match[2]) {
         return {
           Authorization: `Bearer ${match[2]}`,
+        }
+      }
+
+      // Check if guest user session is active as fallback
+      const guestStateStr = localStorage.getItem("green-hero-guest-state")
+      if (guestStateStr) {
+        try {
+          const guestState = JSON.parse(guestStateStr)
+          const guestUserId = guestState.state?.guestUserId
+          if (guestUserId) {
+            return {
+              Authorization: `Bearer mock-token-${guestUserId}`,
+            }
+          }
+        } catch (e) {
+          // Ignore JSON parse errors
         }
       }
     }
