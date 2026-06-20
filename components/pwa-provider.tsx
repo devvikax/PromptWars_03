@@ -13,6 +13,35 @@ export function PwaProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     if (typeof window === "undefined") return
 
+    // Force-clear service worker and caches to resolve layout/uncached styling issues
+    const FORCE_CLEAR_KEY = "sw-force-cleared-v3"
+    if (!localStorage.getItem(FORCE_CLEAR_KEY)) {
+      localStorage.setItem(FORCE_CLEAR_KEY, "true")
+      const promises: Promise<any>[] = []
+      if ("serviceWorker" in navigator) {
+        promises.push(
+          navigator.serviceWorker.getRegistrations().then((registrations) => {
+            return Promise.all(registrations.map(r => r.unregister()))
+          })
+        )
+      }
+      if ("caches" in window) {
+        promises.push(
+          caches.keys().then((names) => {
+            return Promise.all(names.map(name => caches.delete(name)))
+          })
+        )
+      }
+      Promise.all(promises).then(() => {
+        console.log("Force cleared service workers and caches. Reloading page...")
+        window.location.reload()
+      }).catch((err) => {
+        console.error("Error clearing service workers and caches:", err)
+        window.location.reload()
+      })
+      return
+    }
+
     // 1. Set initial offline status
     setIsOffline(!navigator.onLine)
 
