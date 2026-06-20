@@ -3,7 +3,9 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged,
   signInWithEmailAndPassword,
-  createUserWithEmailAndPassword
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithPopup
 } from "firebase/auth"
 import { useAuthStore } from "@/store/auth-store"
 import { useSessionStore } from "@/store/session-store"
@@ -204,6 +206,70 @@ export async function signInWithEmailPassword(email: string, password: string): 
   } catch (err: any) {
     console.error("Unhandled Login failed:", err)
     setError(err.message || "Failed to log in.")
+    return false
+  } finally {
+    setLoading(false)
+  }
+}
+
+export async function signInWithGoogle(): Promise<boolean> {
+  const { setError, setLoading } = useSessionStore.getState()
+  setLoading(true)
+  setError(null)
+
+  if (isPlaceholderMode) {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    const mockUserId = "usr_mock_google_" + Math.random().toString(36).substring(2, 9)
+    document.cookie = `fb-access-token=mock-token-${mockUserId}; path=/; max-age=${60 * 60 * 24 * 7}; SameSite=Lax`
+    
+    useAuthStore.getState().setSessionUser({
+      id: mockUserId,
+      email: "google-user@example.com",
+    })
+
+    await syncAndMergeGuestProgress(mockUserId)
+    setLoading(false)
+    return true
+  }
+
+  try {
+    if (!auth) throw new Error("Firebase Auth is not initialized.")
+    const provider = new GoogleAuthProvider()
+    const result = await signInWithPopup(auth, provider)
+      .catch((err) => {
+        console.error("Google sign in failed:", err)
+        let userMessage = err.message || "Failed to sign in with Google."
+        if (err.code === "auth/popup-closed-by-user") {
+          userMessage = "Sign-in popup closed before completion."
+        } else if (err.code === "auth/cancelled-popup-request") {
+          userMessage = "Multiple popups opened. Request cancelled."
+        }
+        setError(userMessage)
+        return null
+      })
+
+    if (!result) {
+      return false
+    }
+
+    if (result.user) {
+      // Wait for session user to resolve via bridge
+      let retries = 0
+      while (retries < 20) {
+        const currentUser = useAuthStore.getState().user
+        if (currentUser) {
+          await syncAndMergeGuestProgress(currentUser.id)
+          return true
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        retries++
+      }
+      throw new Error("Sync timeout. Please refresh the page.")
+    }
+    return false
+  } catch (err: any) {
+    console.error("Unhandled Google sign-in failed:", err)
+    setError(err.message || "Failed to sign in with Google.")
     return false
   } finally {
     setLoading(false)

@@ -5,6 +5,7 @@ import { useSessionStore } from "@/store/session-store"
 import {
   signInWithEmailPassword,
   registerWithEmailPassword,
+  signInWithGoogle,
   signOutUser,
 } from "@/services/auth"
 
@@ -36,6 +37,10 @@ export function useAuth() {
     loginAsGuest,
     login: handleLogin,
     register: handleRegister,
+    loginWithGoogle: async (): Promise<boolean> => {
+      clearError()
+      return await signInWithGoogle()
+    },
     logout: handleLogout,
   }
 }
