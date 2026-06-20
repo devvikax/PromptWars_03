@@ -107,6 +107,24 @@ export async function registerWithEmailPassword(email: string, password: string)
   try {
     if (!auth) throw new Error("Firebase Auth is not initialized.")
     const result = await createUserWithEmailAndPassword(auth, email, password)
+      .catch((err) => {
+        console.error("Firebase Registration failed:", err)
+        let userMessage = err.message || "Failed to create account."
+        if (err.code === "auth/email-already-in-use") {
+          userMessage = "This email address is already in use."
+        } else if (err.code === "auth/invalid-email") {
+          userMessage = "Please enter a valid email address."
+        } else if (err.code === "auth/weak-password") {
+          userMessage = "Password should be at least 6 characters."
+        }
+        setError(userMessage)
+        return null
+      })
+
+    if (!result) {
+      return false
+    }
+
     if (result.user) {
       // Wait for session user to resolve via bridge
       let retries = 0
@@ -123,16 +141,8 @@ export async function registerWithEmailPassword(email: string, password: string)
     }
     return false
   } catch (err: any) {
-    console.error("Firebase Registration failed:", err)
-    let userMessage = err.message || "Failed to create account."
-    if (err.code === "auth/email-already-in-use") {
-      userMessage = "This email address is already in use."
-    } else if (err.code === "auth/invalid-email") {
-      userMessage = "Please enter a valid email address."
-    } else if (err.code === "auth/weak-password") {
-      userMessage = "Password should be at least 6 characters."
-    }
-    setError(userMessage)
+    console.error("Unhandled Registration failed:", err)
+    setError(err.message || "Failed to create account.")
     return false
   } finally {
     setLoading(false)
@@ -162,6 +172,20 @@ export async function signInWithEmailPassword(email: string, password: string): 
   try {
     if (!auth) throw new Error("Firebase Auth is not initialized.")
     const result = await signInWithEmailAndPassword(auth, email, password)
+      .catch((err) => {
+        console.error("Firebase Login failed:", err)
+        let userMessage = err.message || "Failed to log in."
+        if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
+          userMessage = "Invalid email or password."
+        }
+        setError(userMessage)
+        return null
+      })
+
+    if (!result) {
+      return false
+    }
+
     if (result.user) {
       // Wait for session user to resolve via bridge
       let retries = 0
@@ -178,12 +202,8 @@ export async function signInWithEmailPassword(email: string, password: string): 
     }
     return false
   } catch (err: any) {
-    console.error("Firebase Login failed:", err)
-    let userMessage = err.message || "Failed to log in."
-    if (err.code === "auth/invalid-credential" || err.code === "auth/wrong-password" || err.code === "auth/user-not-found") {
-      userMessage = "Invalid email or password."
-    }
-    setError(userMessage)
+    console.error("Unhandled Login failed:", err)
+    setError(err.message || "Failed to log in.")
     return false
   } finally {
     setLoading(false)
