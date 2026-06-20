@@ -3,14 +3,32 @@
 import { create } from "zustand"
 import { persist, createJSONStorage } from "zustand/middleware"
 import { getAuthHeader } from "@/services/auth-header"
-import { getCoachResponse } from "@/services/llm-coach-service"
 
 export type CoachEmotion = "happy" | "encouraging" | "cheering" | "thinking"
 
 export interface ChatMessage {
+  id?: string
   sender: "user" | "coach"
   text: string
   timestamp: string
+}
+
+export interface Conversation {
+  id: string
+  title: string
+  createdAt: string
+}
+
+export interface AISuggestedMission {
+  id: string
+  title: string
+  description: string
+  category: "transport" | "energy" | "diet"
+  difficulty: "easy" | "medium" | "advanced"
+  estimatedImpact: "low" | "medium" | "high"
+  xpReward: number
+  waterReward: number
+  successRate: number
 }
 
 interface CoachState {
@@ -18,14 +36,28 @@ interface CoachState {
   dailyInsights: string[]
   chatHistory: ChatMessage[]
   coachEmotion: CoachEmotion
-  
+  conversations: Conversation[]
+  activeConversationId: string
+  loadingConversations: boolean
+  generatingMissions: boolean
+  suggestedMissions: AISuggestedMission[]
+  feedbackState: Record<string, "up" | "down"> // keyed by message index or content
+
   // Actions
   triggerGreeting: (streak: number, level: number, completedCountToday: number, missedDays?: boolean) => void
-  askCoach: (question: string) => Promise<void>
-  addChatMessage: (sender: "user" | "coach", text: string) => void
+  addChatMessage: (sender: "user" | "coach", text: string, id?: string) => void
   generateDailyInsights: (streak: number, completedThisWeek: number, flowersUnlocked: boolean, nestUnlocked: boolean) => void
-  syncInsightsWithSupabase: (userId: string) => Promise<void>
   resetCoach: () => void
+
+  // Extended AI Features
+  loadConversations: () => Promise<void>
+  selectConversation: (convId: string) => Promise<void>
+  createNewConversation: (title?: string) => Promise<string>
+  askCoach: (question: string, subAction?: string, additionalData?: Record<string, any>) => Promise<void>
+  submitMessageFeedback: (messageText: string, rating: "up" | "down") => Promise<void>
+  generateCustomMissions: () => Promise<void>
+  triggerStreakRescue: () => Promise<void>
+  triggerProgressReview: (interval: "weekly" | "monthly") => Promise<void>
 }
 
 export const useAiCoachStore = create<CoachState>()(
@@ -39,6 +71,12 @@ export const useAiCoachStore = create<CoachState>()(
       ],
       chatHistory: [],
       coachEmotion: "happy",
+      conversations: [],
+      activeConversationId: "default_chat",
+      loadingConversations: false,
+      generatingMissions: false,
+      suggestedMissions: [],
+      feedbackState: {},
 
       triggerGreeting: (streak, level, completedCountToday, missedDays = false) => {
         let message = ""
@@ -57,7 +95,6 @@ export const useAiCoachStore = create<CoachState>()(
           message = `A ${streak}-day streak! You are solidifying green habits in your lifestyle. Keep up the high energy! 🔥`
           emotion = "happy"
         } else {
-          // Standard rotation of friendly guidances
           const tips = [
             "Remember, setting your AC temperature just 1°C higher saves a significant amount of electricity. 💡",
             "Try walking a short distance today instead of driving. It's good for your health and the planet! 🚶",
@@ -71,20 +108,9 @@ export const useAiCoachStore = create<CoachState>()(
         set({ currentMessage: message, coachEmotion: emotion })
       },
 
-      askCoach: async (question) => {
-        get().addChatMessage("user", question)
-        set({ coachEmotion: "thinking" })
-
-        const history = get().chatHistory
-        // Retrieve response from Llama / rule-based NLP layer
-        const responseText = await getCoachResponse(question, history)
-
-        set({ coachEmotion: "happy" })
-        get().addChatMessage("coach", responseText)
-      },
-
-      addChatMessage: (sender, text) => {
+      addChatMessage: (sender, text, id) => {
         const newMessage: ChatMessage = {
+          id: id || `${Date.now()}-${sender}`,
           sender,
           text,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -96,18 +122,13 @@ export const useAiCoachStore = create<CoachState>()(
 
       generateDailyInsights: (streak, completedThisWeek, flowersUnlocked, nestUnlocked) => {
         const insights = []
-
-        // Insight 1: Carbon stats / category advice
         insights.push("Your transport habits represent your biggest opportunity to cut carbon.")
-
-        // Insight 2: Weekly summary
         insights.push(
           completedThisWeek > 0
             ? `You completed ${completedThisWeek} mission${completedThisWeek > 1 ? "s" : ""} this week. Outstanding consistency!`
             : "No missions completed this week yet. Logging one quick action gets you back on track!"
         )
 
-        // Insight 3: Ecosystem milestones
         if (!flowersUnlocked) {
           insights.push("Maintain a 7-day streak or reach Level 7 to unlock Blooming Flowers on your island base!")
         } else if (!nestUnlocked) {
@@ -119,28 +140,172 @@ export const useAiCoachStore = create<CoachState>()(
         set({ dailyInsights: insights })
       },
 
-      syncInsightsWithSupabase: async (userId) => {
+      loadConversations: async () => {
+        set({ loadingConversations: true })
         try {
-          const insights = get().dailyInsights
-          // Sync the primary weekly insights to API
-          if (insights.length > 0) {
-            const headers = await getAuthHeader()
-            const res = await fetch("/api/ai-coach", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                ...headers,
-              },
-              body: JSON.stringify({
-                action: "sync-insights",
-                insights,
-              }),
-            })
-            if (!res.ok) throw new Error("API error")
+          const headers = await getAuthHeader()
+          const res = await fetch("/api/ai-coach?action=list-conversations", {
+            method: "GET",
+            headers,
+          })
+          if (res.ok) {
+            const data = await res.json()
+            set({ conversations: data.conversations || [] })
           }
         } catch (e) {
-          console.warn("Failed to sync insights via API:", e)
+          console.error("Failed to load conversations:", e)
+        } finally {
+          set({ loadingConversations: false })
         }
+      },
+
+      selectConversation: async (convId) => {
+        set({ activeConversationId: convId, coachEmotion: "thinking" })
+        try {
+          const headers = await getAuthHeader()
+          const res = await fetch(`/api/ai-coach?action=get-messages&conversationId=${convId}`, {
+            method: "GET",
+            headers,
+          })
+          if (res.ok) {
+            const data = await res.json()
+            set({ chatHistory: data.messages || [] })
+          }
+        } catch (e) {
+          console.error("Failed to load messages:", e)
+        } finally {
+          set({ coachEmotion: "happy" })
+        }
+      },
+
+      createNewConversation: async (title) => {
+        try {
+          const headers = await getAuthHeader()
+          const res = await fetch("/api/ai-coach", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+            body: JSON.stringify({
+              action: "create-conversation",
+              title,
+            })
+          })
+          if (res.ok) {
+            const data = await res.json()
+            const conv = data.conversation
+            if (conv) {
+              set((state) => ({
+                conversations: [conv, ...state.conversations],
+                activeConversationId: conv.id,
+                chatHistory: [],
+              }))
+              return conv.id
+            }
+          }
+        } catch (e) {
+          console.error("Failed to create conversation:", e)
+        }
+        return "default_chat"
+      },
+
+      askCoach: async (question, subAction, additionalData) => {
+        const activeConversationId = get().activeConversationId || "default_chat"
+        get().addChatMessage("user", question)
+        set({ coachEmotion: "thinking" })
+
+        try {
+          const headers = await getAuthHeader()
+          const res = await fetch("/api/ai-coach", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+            body: JSON.stringify({
+              question,
+              history: get().chatHistory,
+              conversationId: activeConversationId,
+              subAction,
+              ...additionalData,
+            })
+          })
+
+          set({ coachEmotion: "happy" })
+
+          if (res.ok) {
+            const data = await res.json()
+            get().addChatMessage("coach", data.reply)
+          } else {
+            get().addChatMessage("coach", "Oops! I encountered an error. Please try again.")
+          }
+        } catch (e) {
+          console.error("Failed to ask AI Coach:", e)
+          set({ coachEmotion: "happy" })
+          get().addChatMessage("coach", "Network error. Please make sure the dev server is active!")
+        }
+      },
+
+      submitMessageFeedback: async (messageText, rating) => {
+        try {
+          const headers = await getAuthHeader()
+          const res = await fetch("/api/ai-coach", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+            body: JSON.stringify({
+              action: "submit-feedback",
+              messageText,
+              type: rating,
+            })
+          })
+          if (res.ok) {
+            set((state) => ({
+              feedbackState: {
+                ...state.feedbackState,
+                [messageText]: rating
+              }
+            }))
+          }
+        } catch (e) {
+          console.error("Failed to submit feedback:", e)
+        }
+      },
+
+      generateCustomMissions: async () => {
+        set({ generatingMissions: true })
+        try {
+          const headers = await getAuthHeader()
+          const res = await fetch("/api/ai-coach", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...headers,
+            },
+            body: JSON.stringify({
+              action: "generate-missions"
+            })
+          })
+          if (res.ok) {
+            const data = await res.json()
+            set({ suggestedMissions: data.missions || [] })
+          }
+        } catch (e) {
+          console.error("Failed to generate custom missions:", e)
+        } finally {
+          set({ generatingMissions: false })
+        }
+      },
+
+      triggerStreakRescue: async () => {
+        await get().askCoach("Help me rescue my streak! 🩹", "streak-rescue")
+      },
+
+      triggerProgressReview: async (interval) => {
+        await get().askCoach(`Can you give me my ${interval} review? 📊`, "progress-review", { interval })
       },
 
       resetCoach: () => {
@@ -148,16 +313,22 @@ export const useAiCoachStore = create<CoachState>()(
           currentMessage: "Welcome back, Hero! Let's work together to nurture your ecosystem today. 🌱",
           chatHistory: [],
           coachEmotion: "happy",
+          conversations: [],
+          activeConversationId: "default_chat",
+          suggestedMissions: [],
+          feedbackState: {},
         })
       }
     }),
     {
       name: "green-hero-ai-coach-state",
       storage: createJSONStorage(() => localStorage),
-      // Avoid persisting the full live chat dialog history across separate sessions if preferred
+      // Persist conversations context
       partialize: (state) => ({
         currentMessage: state.currentMessage,
         dailyInsights: state.dailyInsights,
+        activeConversationId: state.activeConversationId,
+        conversations: state.conversations,
       })
     }
   )

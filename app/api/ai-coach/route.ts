@@ -1,18 +1,68 @@
 import { NextResponse } from "next/server"
-import { getVerifiedUserId, dbRead, dbWrite } from "@/lib/firebase-server"
+import { getVerifiedUserId, dbRead, dbWrite, dbUpdate } from "@/lib/firebase-server"
+import { buildUserAIContext } from "@/services/ai-coach/context"
+import { buildCoachingPrompt, buildStreakRescuePrompt, buildProgressReviewPrompt } from "@/services/ai-coach/prompts"
+import { getActiveProvider } from "@/services/ai-coach/providers"
+import { generateAIPersonalizedMissions } from "@/services/ai-coach/mission-engine"
+import { getCoachResponse } from "@/services/llm-coach-service"
 
-// 1. In-memory Server Cache (expires every 10 minutes)
+// 1. In-memory Cache layer for daily insights / repeated questions
 interface CacheEntry {
   reply: string
   timestamp: number
 }
 const RESPONSE_CACHE: Record<string, CacheEntry> = {}
-const CACHE_TTL_MS = 10 * 60 * 1000
+const CACHE_TTL_MS = 15 * 60 * 1000 // 15 mins
 
-// 2. In-memory Rate Limiter (Max 5 requests per minute per user)
+// 2. In-memory Rate Limiter
 const rateLimitMap: Record<string, number[]> = {}
 const RATE_LIMIT_WINDOW_MS = 60 * 1000
-const MAX_REQUESTS_PER_WINDOW = 5
+const MAX_REQUESTS_PER_WINDOW = 10
+
+// Verify rate limit helper
+function checkRateLimit(userId: string): boolean {
+  const now = Date.now()
+  if (!rateLimitMap[userId]) {
+    rateLimitMap[userId] = []
+  }
+  rateLimitMap[userId] = rateLimitMap[userId].filter((t) => t > now - RATE_LIMIT_WINDOW_MS)
+  if (rateLimitMap[userId].length >= MAX_REQUESTS_PER_WINDOW) {
+    return false
+  }
+  rateLimitMap[userId].push(now)
+  return true
+}
+
+export async function GET(request: Request) {
+  try {
+    const authHeader = request.headers.get("Authorization")
+    const userId = await getVerifiedUserId(authHeader)
+    
+    const { searchParams } = new URL(request.url)
+    const action = searchParams.get("action")
+
+    if (action === "list-conversations") {
+      const conversations = await dbRead<Record<string, any>>(`users/${userId}/ai_coach/conversations`)
+      const list = conversations ? Object.values(conversations) : []
+      return NextResponse.json({ conversations: list })
+    }
+
+    if (action === "get-messages") {
+      const conversationId = searchParams.get("conversationId")
+      if (!conversationId) {
+        return NextResponse.json({ error: "Missing conversationId" }, { status: 400 })
+      }
+      const messages = await dbRead<Record<string, any>>(`users/${userId}/ai_coach/messages/${conversationId}`)
+      const list = messages ? Object.values(messages) : []
+      return NextResponse.json({ messages: list })
+    }
+
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 })
+  } catch (error: any) {
+    console.error("API /api/ai-coach GET error:", error)
+    return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 })
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -20,9 +70,66 @@ export async function POST(request: Request) {
     const userId = await getVerifiedUserId(authHeader)
     
     const body = await request.json()
+    const { action } = body
 
-    // Handle sync-insights action
-    if (body.action === "sync-insights") {
+    // 1. Action: create-conversation
+    if (action === "create-conversation") {
+      const conversationId = Date.now().toString()
+      const title = body.title || `Chat Thread ${new Date().toLocaleDateString()}`
+      
+      const newConv = {
+        id: conversationId,
+        title,
+        createdAt: new Date().toISOString(),
+      }
+      await dbWrite(`users/${userId}/ai_coach/conversations/${conversationId}`, newConv)
+      return NextResponse.json({ conversation: newConv })
+    }
+
+    // 2. Action: submit-feedback (Message Rating feedback)
+    if (action === "submit-feedback") {
+      const { messageText, type } = body
+      if (!messageText || !type) {
+        return NextResponse.json({ error: "Missing messageText or type" }, { status: 400 })
+      }
+      const feedbackId = Date.now().toString()
+      const feedback = {
+        id: feedbackId,
+        messageText,
+        type, // 'up' | 'down'
+        timestamp: new Date().toISOString(),
+      }
+      await dbWrite(`users/${userId}/ai_coach/feedback/${feedbackId}`, feedback)
+      return NextResponse.json({ success: true })
+    }
+
+    // 3. Action: generate-missions
+    if (action === "generate-missions") {
+      const latencyStart = Date.now()
+      const proposals = await generateAIPersonalizedMissions(userId)
+      const latencyMs = Date.now() - latencyStart
+
+      // Write recommendations to DB
+      const recId = Date.now().toString()
+      await dbWrite(`users/${userId}/ai_coach/recommendations/${recId}`, {
+        id: recId,
+        missions: proposals,
+        timestamp: new Date().toISOString()
+      })
+
+      // Log telemetry event
+      await dbWrite(`users/${userId}/ai_coach/analytics/${recId}`, {
+        id: recId,
+        action: "generate-missions",
+        latencyMs,
+        timestamp: new Date().toISOString()
+      })
+
+      return NextResponse.json({ missions: proposals })
+    }
+
+    // 4. Action: sync-insights (legacy support)
+    if (action === "sync-insights") {
       const { insights } = body
       if (!insights || !Array.isArray(insights)) {
         return NextResponse.json({ error: "Missing insights array" }, { status: 400 })
@@ -37,82 +144,47 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true })
     }
 
-    // Check credentials
-    const apiKey = process.env.LLAMA_API_KEY
-    const apiUrl = process.env.LLAMA_API_URL || "https://api.llama-provider.com/v1"
-
-    if (!apiKey || apiUrl.includes("placeholder-url")) {
+    // Default Action: ask-coach
+    if (!checkRateLimit(userId)) {
       return NextResponse.json(
-        { error: "AI Coach is currently offline. Llama credentials are unconfigured." },
-        { status: 503 }
+        { error: "Rate limit reached. Please wait a minute before retrying. 🍃" },
+        { status: 429 }
       )
     }
 
-    const { question, history } = body
+    const { question, history, conversationId, subAction } = body
     const validQuestion = (question || "").trim()
 
     if (!validQuestion) {
       return NextResponse.json({ error: "Question is required" }, { status: 400 })
     }
 
-    // Rate Limiting Check
-    const now = Date.now()
-    if (!rateLimitMap[userId]) {
-      rateLimitMap[userId] = []
-    }
-    // Filter out timestamps outside the window
-    rateLimitMap[userId] = rateLimitMap[userId].filter((t) => t > now - RATE_LIMIT_WINDOW_MS)
-    if (rateLimitMap[userId].length >= MAX_REQUESTS_PER_WINDOW) {
-      return NextResponse.json(
-        { error: "Rate limit reached. Please wait a minute before retrying. 🍃" },
-        { status: 429 }
-      )
-    }
-    rateLimitMap[userId].push(now)
-
-    // Cache Lookup (Only for single questions, skip cache if history context exists)
-    const cacheKey = `${userId}:${validQuestion}`
+    const activeConversationId = conversationId || "default_chat"
     const hasHistory = Array.isArray(history) && history.length > 0
-    if (!hasHistory && RESPONSE_CACHE[cacheKey]) {
+    const now = Date.now()
+    const cacheKey = `${userId}:${validQuestion}`
+
+    // Cache Lookup for repeating questions
+    if (!hasHistory && !subAction && RESPONSE_CACHE[cacheKey]) {
       const cached = RESPONSE_CACHE[cacheKey]!
       if (now - cached.timestamp < CACHE_TTL_MS) {
         return NextResponse.json({ reply: cached.reply, cached: true })
       }
-      delete RESPONSE_CACHE[cacheKey]
     }
 
-    // Context Builder (Fetch user profile & completions from RTDB in a single query)
-    const user = await dbRead<any>(`users/${userId}`)
-    if (!user) {
-      throw new Error("Failed to fetch user context for AI Coach.")
+    // Fetch user context
+    const context = await buildUserAIContext(userId)
+
+    // Build Prompt based on subAction type
+    let systemPrompt = ""
+    if (subAction === "streak-rescue") {
+      systemPrompt = buildStreakRescuePrompt(context)
+    } else if (subAction === "progress-review") {
+      systemPrompt = buildProgressReviewPrompt(context, body.interval || "weekly")
+    } else {
+      systemPrompt = buildCoachingPrompt(context)
     }
 
-    const completedCount = Object.keys(user.completedMissions || {}).length
-
-    const userContext = {
-      level: user.level || 1,
-      streak: user.streak || 0,
-      completedCount,
-      travelHabit: user.travelType || user.travel_type || "not specified",
-      acUsage: user.acUsage || user.ac_usage || "sometimes",
-      dietPreference: user.foodType || user.food_type || "mixed",
-    }
-
-    // Prompt Builder Pipeline
-    const systemPrompt = `You are Green Hero's AI Sustainability Coach. Speak in a friendly, encouraging, and human-like voice.
-Your goal is to help users understand carbon saving, improve their daily routines, and stay motivated without feeling guilty.
-Keep explanations extremely short and simple (under 2-3 sentences max). Use formatting like emojis where appropriate.
-Avoid complex carbon reports and technical language.
-
-User Profile Context:
-- Current Level: ${userContext.level}
-- Active Streak: ${userContext.streak} days
-- Total Completed Missions: ${userContext.completedCount}
-- Travel Habit: ${userContext.travelHabit}
-- AC Usage: ${userContext.acUsage}
-- Diet Preference: ${userContext.dietPreference}`
-
-    // Map history turns to OpenAI format (Keep last 5 turns for context to fit token limit)
     const formattedHistory = hasHistory
       ? history.slice(-5).map((turn: any) => ({
           role: turn.sender === "user" ? "user" : "assistant",
@@ -126,47 +198,70 @@ User Profile Context:
       { role: "user", content: validQuestion }
     ]
 
-    // Call Llama endpoint
-    const response = await fetch(`${apiUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: "llama-3.1-8b-instant",
-        messages,
-        temperature: 1.0,
-        max_tokens: 150
-      })
-    })
+    let reply = ""
+    let tokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+    let latencyMs = 0
+    
+    // Check credentials configuration
+    const apiKey = process.env.LLAMA_API_KEY
+    const hasProviderConfig = !!apiKey && apiKey !== "your-groq-llama-api-key"
 
-    if (!response.ok) {
-      throw new Error(`Llama API responded with status ${response.status}`)
+    if (hasProviderConfig) {
+      const provider = getActiveProvider()
+      const startTime = Date.now()
+      try {
+        const response = await provider.chat(messages)
+        reply = response.reply
+        tokenUsage = response.usage
+        latencyMs = Date.now() - startTime
+      } catch (err) {
+        console.error("Provider chat failed, falling back to rule-based engine:", err)
+        reply = await getCoachResponse(validQuestion, history)
+      }
+    } else {
+      // Fallback directly to rule-based engine locally
+      reply = await getCoachResponse(validQuestion, history)
     }
 
-    const json = await response.json()
-    const reply = json.choices?.[0]?.message?.content || "I'm having trouble speaking. Let's try again in a bit!"
-    const usage = json.usage || {}
+    if (!reply) {
+      reply = "I'm having trouble speaking. Let's try again in a bit!"
+    }
 
-    // Cache the response if it was a single query without history
-    if (!hasHistory) {
+    // Cache response
+    if (!hasHistory && !subAction) {
       RESPONSE_CACHE[cacheKey] = {
         reply,
         timestamp: now,
       }
     }
 
-    // Response Storage (Sync/Save to Firebase insight logs with token usage tracking)
-    const logId = Date.now().toString()
-    await dbWrite(`users/${userId}/insightLogs/${logId}`, {
-      content: `Chat Question: ${validQuestion} | Coach Answer: ${reply}`,
+    // Save message history to DB
+    const userMsgId = `${Date.now()}-user`
+    const coachMsgId = `${Date.now()}-coach`
+
+    await Promise.all([
+      dbWrite(`users/${userId}/ai_coach/messages/${activeConversationId}/${userMsgId}`, {
+        id: userMsgId,
+        sender: "user",
+        text: validQuestion,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      }),
+      dbWrite(`users/${userId}/ai_coach/messages/${activeConversationId}/${coachMsgId}`, {
+        id: coachMsgId,
+        sender: "coach",
+        text: reply,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      })
+    ])
+
+    // Save Analytics Telemetry
+    const analyticsId = Date.now().toString()
+    await dbWrite(`users/${userId}/ai_coach/analytics/${analyticsId}`, {
+      id: analyticsId,
+      action: subAction || "chat",
+      latencyMs,
+      tokenUsage,
       timestamp: new Date().toISOString(),
-      tokenUsage: {
-        promptTokens: usage.prompt_tokens || 0,
-        completionTokens: usage.completion_tokens || 0,
-        totalTokens: usage.total_tokens || 0
-      }
     })
 
     return NextResponse.json({ reply })
