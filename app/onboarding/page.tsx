@@ -26,6 +26,7 @@ const QUESTIONS: OnboardingQuestion[] = [
     description: "Your daily commute is the biggest direct source of personal emissions.",
     options: [
       { value: "car", label: "Car", emoji: "🚗" },
+      { value: "motorbike", label: "Motorbike", emoji: "🏍️" },
       { value: "bus", label: "Bus", emoji: "🚌" },
       { value: "metro", label: "Metro", emoji: "🚇" },
       { value: "cycle", label: "Cycle", emoji: "🚲" },

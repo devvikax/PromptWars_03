@@ -26,6 +26,8 @@ export function generatePersonalizedMissions(
     if (mission.category === "transport") {
       if (context.travelType === "car") {
         preferenceMatch = 1.0 // High priority for car drivers to substitute trips
+      } else if (context.travelType === "motorbike") {
+        preferenceMatch = 0.85 // High priority for motorbike riders to substitute trips
       } else if (context.travelType === "bus" || context.travelType === "metro") {
         preferenceMatch = 0.7
       } else {

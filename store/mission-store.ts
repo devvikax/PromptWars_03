@@ -224,7 +224,7 @@ export const useMissionStore = create<MissionState>()(
       generateFirstMission: (answers) => {
         let firstMission: Mission
 
-        if (answers.travelType === "car") {
+        if (answers.travelType === "car" || answers.travelType === "motorbike") {
           firstMission = {
             id: "595dbf41-0731-4171-8bc6-52c6f1400002",
             title: "Cycle to Work / School",
